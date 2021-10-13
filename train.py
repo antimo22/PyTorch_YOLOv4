@@ -37,9 +37,57 @@ logger = logging.getLogger(__name__)
 
 try:
     import wandb
+  #  wandb.init(project="test-project")
 except ImportError:
     wandb = None
+    print("wandb not available")
     logger.info("Install Weights & Biases for experiment logging via 'pip install wandb' (recommended)")
+    
+##
+
+WANDB_ARTIFACT_PREFIX = 'wandb-artifact://'
+
+def remove_prefix(from_string, prefix=WANDB_ARTIFACT_PREFIX):
+    return from_string[len(prefix):]
+    
+def check_wandb_resume(opt):
+    process_wandb_config_ddp_mode(opt) if RANK not in [-1, 0] else None
+    if isinstance(opt.resume, str):
+        if opt.resume.startswith(WANDB_ARTIFACT_PREFIX):
+            if RANK not in [-1, 0]:  # For resuming DDP runs
+                entity, project, run_id, model_artifact_name = get_run_info(opt.resume)
+                api = wandb.Api()
+                artifact = api.artifact(entity + '/' + project + '/' + model_artifact_name + ':latest')
+                modeldir = artifact.download()
+                opt.weights = str(Path(modeldir) / "last.pt")
+            return True
+    return None
+
+
+def process_wandb_config_ddp_mode(opt):
+    with open(check_file(opt.data), errors='ignore') as f:
+        data_dict = yaml.safe_load(f)  # data dict
+    train_dir, val_dir = None, None
+    if isinstance(data_dict['train'], str) and data_dict['train'].startswith(WANDB_ARTIFACT_PREFIX):
+        api = wandb.Api()
+        train_artifact = api.artifact(remove_prefix(data_dict['train']) + ':' + opt.artifact_alias)
+        train_dir = train_artifact.download()
+        train_path = Path(train_dir) / 'data/images/'
+        data_dict['train'] = str(train_path)
+
+    if isinstance(data_dict['val'], str) and data_dict['val'].startswith(WANDB_ARTIFACT_PREFIX):
+        api = wandb.Api()
+        val_artifact = api.artifact(remove_prefix(data_dict['val']) + ':' + opt.artifact_alias)
+        val_dir = val_artifact.download()
+        val_path = Path(val_dir) / 'data/images/'
+        data_dict['val'] = str(val_path)
+    if train_dir or val_dir:
+        ddp_data_path = str(Path(val_dir) / 'wandb_local_data.yaml')
+        with open(ddp_data_path, 'w') as f:
+            yaml.safe_dump(data_dict, f)
+        opt.data = ddp_data_path
+
+##
 
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(f'Hyperparameters {hyp}')
@@ -120,12 +168,12 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # Logging
-    if wandb and wandb.run is None:
-        opt.hyp = hyp  # add hyperparameters
-        wandb_run = wandb.init(config=opt, resume="allow",
-                               project='YOLOv4' if opt.project == 'runs/train' else Path(opt.project).stem,
-                               name=save_dir.stem,
-                               id=ckpt.get('wandb_id') if 'ckpt' in locals() else None)
+    #if wandb and wandb.run is None:
+    opt.hyp = hyp  # add hyperparameters
+    wandb_run = wandb.init(config=opt, resume="allow",
+                            project='YOLOv4' if opt.project == 'runs/train' else Path(opt.project).stem,
+                            name=save_dir.stem,
+                            id=ckpt.get('wandb_id') if 'ckpt' in locals() else None)
 
     # Resume
     start_epoch, best_fitness = 0, 0.0
@@ -400,7 +448,13 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                             'wandb_id': wandb_run.id if wandb else None}
 
                 # Save last, best and delete
-                torch.save(ckpt, last)
+                torch.save(ckpt, os.path.join(wandb_run.dir,f"epoch{epoch}.pt")) 
+                wandb.log_artifact(
+                    os.path.join(wandb_run.dir,f"epoch{epoch}.pt"), type='model',
+                    name='run_' + wandb_run.id + '_model',
+                    aliases=['latest', 'best', 'stripped']
+                )
+                os.remove(os.path.join(wandb_run.dir, f"epoch{epoch}.pt"))
                 if best_fitness == fi:
                     torch.save(ckpt, best)
                 if (best_fitness == fi) and (epoch >= 200):
@@ -425,6 +479,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     torch.save(ckpt, wdir / 'last_{:03d}.pt'.format(epoch))
                 elif epoch >= 420: 
                     torch.save(ckpt, wdir / 'last_{:03d}.pt'.format(epoch))
+
+
                 del ckpt
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -494,13 +550,15 @@ if __name__ == '__main__':
         check_git_status()
 
     # Resume
-    if opt.resume:  # resume an interrupted run
+    if opt.resume and not check_wandb_resume(opt) and not opt.evolve:  # resume an interrupted run
         ckpt = opt.resume if isinstance(opt.resume, str) else get_latest_run()  # specified or most recent path
         assert os.path.isfile(ckpt), 'ERROR: --resume checkpoint does not exist'
         with open(Path(ckpt).parent.parent / 'opt.yaml') as f:
             opt = argparse.Namespace(**yaml.load(f, Loader=yaml.FullLoader))  # replace
         opt.cfg, opt.weights, opt.resume = '', ckpt, True
         logger.info('Resuming training from %s' % ckpt)
+    
+    
     else:
         # opt.hyp = opt.hyp or ('hyp.finetune.yaml' if opt.weights else 'hyp.scratch.yaml')
         opt.data, opt.cfg, opt.hyp = check_file(opt.data), check_file(opt.cfg), check_file(opt.hyp)  # check files
