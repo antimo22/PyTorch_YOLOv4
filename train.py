@@ -50,11 +50,19 @@ WANDB_ARTIFACT_PREFIX = 'wandb-artifact://'
 def remove_prefix(from_string, prefix=WANDB_ARTIFACT_PREFIX):
     return from_string[len(prefix):]
     
+def get_run_info(run_path):
+    run_path = Path(remove_prefix(run_path, WANDB_ARTIFACT_PREFIX))
+    run_id = run_path.stem
+    project = run_path.parent.stem
+    entity = run_path.parent.parent.stem
+    model_artifact_name = 'run_' + run_id + '_model'
+    return entity, project, run_id, model_artifact_name
+    
 def check_wandb_resume(opt):
-    process_wandb_config_ddp_mode(opt) if RANK not in [-1, 0] else None
+    process_wandb_config_ddp_mode(opt) if opt.global_rank not in [-1, 0] else None
     if isinstance(opt.resume, str):
         if opt.resume.startswith(WANDB_ARTIFACT_PREFIX):
-            if RANK not in [-1, 0]:  # For resuming DDP runs
+            if opt.global_rank not in [-1, 0]:  # For resuming DDP runs
                 entity, project, run_id, model_artifact_name = get_run_info(opt.resume)
                 api = wandb.Api()
                 artifact = api.artifact(entity + '/' + project + '/' + model_artifact_name + ':latest')
