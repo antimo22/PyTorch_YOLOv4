@@ -123,6 +123,9 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     with open(save_dir / 'opt.yaml', 'w') as f:
         yaml.dump(vars(opt), f, sort_keys=False)
 
+    print('pesi1\n\n')
+    print(weights)
+
     # Loggers
     if rank in [-1, 0]:
         loggers = Loggers(save_dir, weights, opt, hyp, logger)  # loggers instance
@@ -135,6 +138,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         for k in methods(loggers):
             callbacks.register_action(k, callback=getattr(loggers, k))
 
+    print(weights)
     # Configure
     plots = not opt.evolve  # create plots
     cuda = device.type != 'cpu'
@@ -142,7 +146,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     with open(opt.data) as f:
         data_dict = yaml.load(f, Loader=yaml.FullLoader)  # data dict
     with torch_distributed_zero_first(rank):
-        check_dataset(data_dict)  # check
+        data_dict = data_dict or check_dataset(data)
     train_path = data_dict['train']
     test_path = data_dict['val']
     nc, names = (1, ['item']) if opt.single_cls else (int(data_dict['nc']), data_dict['names'])  # number classes, names
@@ -150,6 +154,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Model
     pretrained = weights.endswith('.pt')
+    print(weights)
     if pretrained:
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
@@ -492,6 +497,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     'fitness_score': fi
                 })
                 model_artifact.add_file(os.path.join(wandb_run.dir,f"epoch{epoch}.pt"))
+                # model_artifact.add_file(os.path.join(wandb_run.dir,f"last.pt"))
+
 
                 # wandb.log_artifact(
                 #     os.path.join(wandb_run.dir,f"epoch{epoch}.pt"), type='model',

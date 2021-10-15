@@ -223,7 +223,14 @@ class WandbLogger():
         if isinstance(opt.resume, str):
             modeldir, _ = self.download_model_artifact(opt)
             if modeldir:
-                self.weights = Path(modeldir) / "last.pt"
+                for root, dirs, files in os.walk(modeldir):
+                  for file in files:
+                      if file.endswith(".pt"):
+                          w_path = file
+                      break
+                  break
+                # self.weights = Path(modeldir) / "last.pt"
+                self.weights = Path(modeldir) / str(file)
                 config = self.wandb_run.config
                 opt.weights, opt.save_period, opt.batch_size, opt.bbox_interval, opt.epochs, opt.hyp = str(
                     self.weights), config.save_period, config.batch_size, config.bbox_interval, config.epochs, \
