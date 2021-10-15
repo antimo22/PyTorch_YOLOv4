@@ -75,24 +75,56 @@ def check_file(file):
         return files[0]  # return file
 
 
-def check_dataset(dict):
-    # Download dataset if not found locally
-    val, s = dict.get('val'), dict.get('download')
-    if val and len(val):
+def check_dataset(data, autodownload=True):
+    # Download and/or unzip dataset if not found locally
+    # Usage: https://github.com/ultralytics/yolov5/releases/download/v1.0/coco128_with_yaml.zip
+
+    # Download (optional)
+    extract_dir = ''
+    if isinstance(data, (str, Path)) and str(data).endswith('.zip'):  # i.e. gs://bucket/dir/coco128.zip
+        download(data, dir='../datasets', unzip=True, delete=False, curl=False, threads=1)
+        data = next((Path('../datasets') / Path(data).stem).rglob('*.yaml'))
+        extract_dir, autodownload = data.parent, False
+
+    # Read yaml (optional)
+    if isinstance(data, (str, Path)):
+        with open(data, errors='ignore') as f:
+            data = yaml.safe_load(f)  # dictionary
+
+    # Parse yaml
+    path = extract_dir or Path(data.get('path') or '')  # optional 'path' default to '.'
+    for k in 'train', 'val', 'test':
+        if data.get(k):  # prepend path
+            data[k] = str(path / data[k]) if isinstance(data[k], str) else [str(path / x) for x in data[k]]
+
+    assert 'nc' in data, "Dataset 'nc' key missing."
+    if 'names' not in data:
+        data['names'] = [f'class{i}' for i in range(data['nc'])]  # assign class names if missing
+    train, val, test, s = [data.get(x) for x in ('train', 'val', 'test', 'download')]
+    if val:
         val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]  # val path
         if not all(x.exists() for x in val):
             print('\nWARNING: Dataset not found, nonexistent paths: %s' % [str(x) for x in val if not x.exists()])
-            if s and len(s):  # download script
-                print('Downloading %s ...' % s)
+            if s and autodownload:  # download script
+                root = path.parent if 'path' in data else '..'  # unzip directory i.e. '../'
                 if s.startswith('http') and s.endswith('.zip'):  # URL
                     f = Path(s).name  # filename
+                    print(f'Downloading {s} to {f}...')
                     torch.hub.download_url_to_file(s, f)
-                    r = os.system('unzip -q %s -d ../ && rm %s' % (f, f))  # unzip
-                else:  # bash script
+                    Path(root).mkdir(parents=True, exist_ok=True)  # create root
+                    ZipFile(f).extractall(path=root)  # unzip
+                    Path(f).unlink()  # remove zip
+                    r = None  # success
+                elif s.startswith('bash '):  # bash script
+                    print(f'Running {s} ...')
                     r = os.system(s)
-                print('Dataset autodownload %s\n' % ('success' if r == 0 else 'failure'))  # analyze return value
+                else:  # python script
+                    r = exec(s, {'yaml': data})  # return None
+                print(f"Dataset autodownload {f'success, saved to {root}' if r in (0, None) else 'failure'}\n")
             else:
                 raise Exception('Dataset not found.')
+
+    return data  # dictionary
 
 
 def make_divisible(x, divisor):
@@ -117,6 +149,31 @@ def labels_to_class_weights(labels, nc=80):
     weights = 1 / weights  # number of targets per class
     weights /= weights.sum()  # normalize
     return torch.from_numpy(weights)
+
+def colorstr(*input):
+    # Colors a string https://en.wikipedia.org/wiki/ANSI_escape_code, i.e.  colorstr('blue', 'hello world')
+    *args, string = input if len(input) > 1 else ('blue', 'bold', input[0])  # color arguments, string
+    colors = {'black': '\033[30m',  # basic colors
+              'red': '\033[31m',
+              'green': '\033[32m',
+              'yellow': '\033[33m',
+              'blue': '\033[34m',
+              'magenta': '\033[35m',
+              'cyan': '\033[36m',
+              'white': '\033[37m',
+              'bright_black': '\033[90m',  # bright colors
+              'bright_red': '\033[91m',
+              'bright_green': '\033[92m',
+              'bright_yellow': '\033[93m',
+              'bright_blue': '\033[94m',
+              'bright_magenta': '\033[95m',
+              'bright_cyan': '\033[96m',
+              'bright_white': '\033[97m',
+              'end': '\033[0m',  # misc
+              'bold': '\033[1m',
+              'underline': '\033[4m'}
+    return ''.join(colors[x] for x in args) + f'{string}' + colors['end']
+
 
 
 def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
@@ -244,6 +301,12 @@ def bbox_iou(box1, box2, x1y1x2y2=True, GIoU=False, DIoU=False, CIoU=False, EIoU
         return iou  # IoU
 
 
+def emojis(str=''):
+    # Return platform-dependent emoji-safe version of string
+    return str.encode().decode('ascii', 'ignore') if platform.system() == 'Windows' else str
+
+
+
 def box_iou(box1, box2):
     # https://github.com/pytorch/vision/blob/master/torchvision/ops/boxes.py
     """
@@ -368,6 +431,10 @@ def strip_optimizer(f='weights/best.pt', s=''):  # from utils.general import *; 
     mb = os.path.getsize(s or f) / 1E6  # filesize
     print('Optimizer stripped from %s,%s %.1fMB' % (f, (' saved as %s,' % s) if s else '', mb))
 
+
+def methods(instance):
+    # Get class/instance methods
+    return [f for f in dir(instance) if callable(getattr(instance, f)) and not f.startswith("__")]
 
 def print_mutation(hyp, results, yaml_file='hyp_evolved.yaml', bucket=''):
     # Print mutation results to evolve.txt (for use with train.py --evolve)

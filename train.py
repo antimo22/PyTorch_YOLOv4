@@ -27,15 +27,19 @@ from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
     fitness, fitness_p, fitness_r, fitness_ap50, fitness_ap, fitness_f, strip_optimizer, get_latest_run,\
-    check_dataset, check_file, check_git_status, check_img_size, print_mutation, set_logging
+    check_dataset, check_file, check_git_status, check_img_size, print_mutation, set_logging, methods
 from utils.google_utils import attempt_download
 from utils.loss import compute_loss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first
 
+from utils.loggers.wandb.wandb_utils import check_wandb_resume
 from utils.loggers import Loggers
+from utils.callbacks import Callbacks
+
 
 logger = logging.getLogger(__name__)
+callbacks = Callbacks()
 
 try:
     import wandb
@@ -128,8 +132,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp
 
         # Register actions
-        # for k in methods(loggers):
-        #     callbacks.register_action(k, callback=getattr(loggers, k))
+        for k in methods(loggers):
+            callbacks.register_action(k, callback=getattr(loggers, k))
 
     # Configure
     plots = not opt.evolve  # create plots
@@ -400,6 +404,7 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         # DDP process 0 or single-GPU
         if rank in [-1, 0]:
             # mAP
+            callbacks.run('on_train_epoch_end', epoch=epoch)
             if ema:
                 ema.update_attr(model)
             final_epoch = epoch + 1 == epochs
@@ -454,6 +459,10 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                 best_fitness_ap = fi_ap
             if fi_f > best_fitness_f:
                 best_fitness_f = fi_f
+            
+            log_vals = list(mloss) + list(results) + lr
+            # callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
+
 
             # Save model
             save = (not opt.nosave) or (final_epoch and not opt.evolve)
@@ -472,12 +481,27 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                             'wandb_id': wandb_run.id if wandb else None}
 
                 # Save last, best and delete
-                torch.save(ckpt, os.path.join(wandb_run.dir,f"epoch{epoch}.pt")) 
-                wandb.log_artifact(
-                    os.path.join(wandb_run.dir,f"epoch{epoch}.pt"), type='model',
-                    name='run_' + wandb_run.id + '_model',
-                    aliases=['latest', 'best', 'stripped']
-                )
+                torch.save(ckpt, os.path.join(wandb_run.dir,f"epoch{epoch}.pt"))
+
+                model_artifact = wandb.Artifact('run_' + wandb.run.id + '_model', type='model', metadata={
+                    'original_url': str(last),
+                    'epochs_trained': epoch + 1,
+                    'save period': opt.save_period,
+                    'project': opt.project,
+                    'total_epochs': opt.epochs,
+                    'fitness_score': fi
+                })
+                model_artifact.add_file(os.path.join(wandb_run.dir,f"epoch{epoch}.pt"))
+
+                # wandb.log_artifact(
+                #     os.path.join(wandb_run.dir,f"epoch{epoch}.pt"), type='model',
+                #     name='run_' + wandb_run.id + '_model',
+                #     aliases=['latest', 'best', 'stripped']
+                # )
+                wandb.log_artifact(model_artifact, aliases=['latest', 'last', 'epoch ' + str(epoch+1)])
+                print("Saving model artifact on epoch ", epoch + 1)
+
+
                 os.remove(os.path.join(wandb_run.dir, f"epoch{epoch}.pt"))
                 if best_fitness == fi:
                     torch.save(ckpt, best)
@@ -529,7 +553,8 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     else:
         dist.destroy_process_group()
 
-    wandb.run.finish() if wandb and wandb.run else None
+    # wandb.run.finish() if wandb and wandb.run else None
+    callbacks.run('on_train_end', last, best, plots, epoch)
     torch.cuda.empty_cache()
     return results
 
@@ -563,6 +588,14 @@ if __name__ == '__main__':
     parser.add_argument('--project', default='runs/train', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+
+    # Weights & Biases arguments
+    parser.add_argument('--save-period', type=int, default=-1, help='Save checkpoint every x epochs (disabled if < 1)')
+    parser.add_argument('--entity', default=None, help='W&B: Entity')
+    parser.add_argument('--upload_dataset', action='store_true', help='W&B: Upload dataset as artifact table')
+    parser.add_argument('--bbox_interval', type=int, default=-1, help='W&B: Set bounding-box image logging interval')
+    parser.add_argument('--artifact_alias', type=str, default='latest', help='W&B: Version of dataset artifact to use')
+    
     opt = parser.parse_args()
 
     # Set DDP variables

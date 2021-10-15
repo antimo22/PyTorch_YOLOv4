@@ -82,6 +82,10 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                     collate_fn=LoadImagesAndLabels.collate_fn)  # torch.utils.data.DataLoader()
     return dataloader, dataset
 
+def img2label_paths(img_paths):
+    # Define label paths as a function of image paths
+    sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
+    return [x.replace(sa, sb, 1).replace(x.split('.')[-1], 'txt') for x in img_paths]
 
 def create_dataloader9(path, imgsz, batch_size, stride, opt, hyp=None, augment=False, cache=False, pad=0.0, rect=False,
                       rank=-1, world_size=1, workers=8):
