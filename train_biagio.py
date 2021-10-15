@@ -33,8 +33,6 @@ from utils.loss import compute_loss
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first
 
-from utils.loggers import Loggers
-
 logger = logging.getLogger(__name__)
 
 try:
@@ -44,67 +42,12 @@ except ImportError:
     wandb = None
     print("wandb not available")
     logger.info("Install Weights & Biases for experiment logging via 'pip install wandb' (recommended)")
-    
-##
 
-# WANDB_ARTIFACT_PREFIX = 'wandb-artifact://'
-
-# def remove_prefix(from_string, prefix=WANDB_ARTIFACT_PREFIX):
-#     return from_string[len(prefix):]
-#
-# def get_run_info(run_path):
-#     run_path = Path(remove_prefix(run_path, WANDB_ARTIFACT_PREFIX))
-#     run_id = run_path.stem
-#     project = run_path.parent.stem
-#     entity = run_path.parent.parent.stem
-#     model_artifact_name = 'run_' + run_id + '_model'
-#     return entity, project, run_id, model_artifact_name
-#
-# def check_wandb_resume(opt):
-#     process_wandb_config_ddp_mode(opt) if opt.global_rank not in [-1, 0] else None
-#     if isinstance(opt.resume, str):
-#         if opt.resume.startswith(WANDB_ARTIFACT_PREFIX):
-#             if opt.global_rank not in [-1, 0]:  # For resuming DDP runs
-#                 entity, project, run_id, model_artifact_name = get_run_info(opt.resume)
-#                 api = wandb.Api()
-#                 artifact = api.artifact(entity + '/' + project + '/' + model_artifact_name + ':latest')
-#                 modeldir = artifact.download()
-#                 opt.weights = str(Path(modeldir) / "last.pt")
-#             return True
-#     return None
-
-
-# def process_wandb_config_ddp_mode(opt):
-#     with open(check_file(opt.data), errors='ignore') as f:
-#         data_dict = yaml.safe_load(f)  # data dict
-#     train_dir, val_dir = None, None
-#     if isinstance(data_dict['train'], str) and data_dict['train'].startswith(WANDB_ARTIFACT_PREFIX):
-#         api = wandb.Api()
-#         train_artifact = api.artifact(remove_prefix(data_dict['train']) + ':' + opt.artifact_alias)
-#         train_dir = train_artifact.download()
-#         train_path = Path(train_dir) / 'data/images/'
-#         data_dict['train'] = str(train_path)
-#
-#     if isinstance(data_dict['val'], str) and data_dict['val'].startswith(WANDB_ARTIFACT_PREFIX):
-#         api = wandb.Api()
-#         val_artifact = api.artifact(remove_prefix(data_dict['val']) + ':' + opt.artifact_alias)
-#         val_dir = val_artifact.download()
-#         val_path = Path(val_dir) / 'data/images/'
-#         data_dict['val'] = str(val_path)
-#     if train_dir or val_dir:
-#         ddp_data_path = str(Path(val_dir) / 'wandb_local_data.yaml')
-#         with open(ddp_data_path, 'w') as f:
-#             yaml.safe_dump(data_dict, f)
-#         opt.data = ddp_data_path
-
-##
 
 def train(hyp, opt, device, tb_writer=None, wandb=None):
     logger.info(f'Hyperparameters {hyp}')
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank
-
-    resume = opt.resume
 
     # Directories
     wdir = save_dir / 'weights'
@@ -118,18 +61,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         yaml.dump(hyp, f, sort_keys=False)
     with open(save_dir / 'opt.yaml', 'w') as f:
         yaml.dump(vars(opt), f, sort_keys=False)
-
-    # Loggers
-    if rank in [-1, 0]:
-        loggers = Loggers(save_dir, weights, opt, hyp, logger)  # loggers instance
-        if loggers.wandb:
-            data_dict = loggers.wandb.data_dict
-            if resume:
-                weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp
-
-        # Register actions
-        # for k in methods(loggers):
-        #     callbacks.register_action(k, callback=getattr(loggers, k))
 
     # Configure
     plots = not opt.evolve  # create plots
