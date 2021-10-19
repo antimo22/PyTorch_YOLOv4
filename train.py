@@ -123,9 +123,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
     with open(save_dir / 'opt.yaml', 'w') as f:
         yaml.dump(vars(opt), f, sort_keys=False)
 
-    print('pesi1\n\n')
-    print(weights)
-
     # Loggers
     if rank in [-1, 0]:
         loggers = Loggers(save_dir, weights, opt, hyp, logger)  # loggers instance
@@ -138,7 +135,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
         for k in methods(loggers):
             callbacks.register_action(k, callback=getattr(loggers, k))
 
-    print(weights)
     # Configure
     plots = not opt.evolve  # create plots
     cuda = device.type != 'cpu'
@@ -154,7 +150,6 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
 
     # Model
     pretrained = weights.endswith('.pt')
-    print(weights)
     if pretrained:
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
