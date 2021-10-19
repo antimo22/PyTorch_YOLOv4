@@ -431,11 +431,15 @@ def train(hyp, opt, device, tb_writer=None, wandb=None):
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
+            if wandb:
+                wandb_log_dict = {}
             for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
                 if tb_writer:
                     tb_writer.add_scalar(tag, x, epoch)  # tensorboard
                 if wandb:
-                    wandb.log({tag: x})  # W&B
+                    wandb_log_dict[tag] = x
+            if wandb:
+                wandb.log(wandb_log_dict)  # W&B
 
             # Update best mAP
             fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
