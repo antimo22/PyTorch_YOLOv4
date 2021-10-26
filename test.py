@@ -131,7 +131,7 @@ def test(data,
 
             # Run NMS
             t = time_synchronized()
-            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres)
+            output = non_max_suppression(inf_out, conf_thres=conf_thres, iou_thres=iou_thres, max_det=5)
             t1 += time_synchronized() - t
 
         # Statistics per image
